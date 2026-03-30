@@ -18,6 +18,8 @@ var selected_index = 0
 var hand_block_instance = null
 
 var mouse_delta := Vector2.ZERO
+var h_angle: float = 0.0
+var v_angle: float = 0.0
 
 # 4. NODES
 @onready var inventory_label = %InventoryLabel
@@ -28,6 +30,16 @@ var mouse_delta := Vector2.ZERO
 @onready var hand_pivot = $SpringArm3D/Camera3D/HandPivot
 
 func _ready():
+	floor_stop_on_slope = true
+	floor_snap_length = 0.3
+	floor_max_angle = deg_to_rad(46)
+	# Replace rounded capsule with flat-bottomed box so player doesn't slide off block edges
+	var col = $CollisionShape3D
+	var box = BoxShape3D.new()
+	box.size = Vector3(0.6, 1.8, 0.6)
+	col.shape = box
+	h_angle = spring_arm.rotation.y
+	v_angle = spring_arm.rotation.x
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	# Disable all joypad input completely
 	Input.joy_connection_changed.connect(_on_joy_connection_changed)
@@ -42,33 +54,41 @@ func _process(_delta):
 	pass
 
 func _physics_process(delta):
-	if not is_on_floor():
+	# Camera rotation first so movement uses the latest look direction
+	if mouse_delta != Vector2.ZERO:
+		h_angle -= mouse_delta.x * SENSITIVITY
+		v_angle = clamp(v_angle - mouse_delta.y * SENSITIVITY, deg_to_rad(-89), deg_to_rad(89))
+		spring_arm.rotation = Vector3(v_angle, h_angle, 0.0)
+		mouse_delta = Vector2.ZERO
+
+	# Gravity
+	if is_on_floor():
+		velocity.y = 0
+	else:
 		velocity.y -= gravity * delta
 
+	# Jump
 	if Input.is_action_just_pressed("ui_accept") and is_on_floor():
 		velocity.y = JUMP_VELOCITY
 
-	# Only read keyboard input — ignore any joypad values
-	var move_dir = Vector3.ZERO
-	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): move_dir.x += 1
-	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): move_dir.x -= 1
-	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): move_dir.z += 1
-	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): move_dir.z -= 1
+	# WASD — direction built from h_angle only, never from physics basis
+	var move_dir = Vector2.ZERO
+	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): move_dir.x += 1.0
+	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): move_dir.x -= 1.0
+	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): move_dir.y += 1.0
+	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): move_dir.y -= 1.0
 
-	var direction = (transform.basis * move_dir).normalized()
-
-	if direction != Vector3.ZERO:
+	if move_dir != Vector2.ZERO:
+		move_dir = move_dir.normalized()
+		var yaw = rotation.y + h_angle
+		var forward = Vector3(-sin(yaw), 0.0, -cos(yaw))
+		var right   = Vector3(cos(yaw), 0.0, -sin(yaw))
+		var direction = (right * move_dir.x + forward * move_dir.y).normalized()
 		velocity.x = direction.x * SPEED
 		velocity.z = direction.z * SPEED
 	else:
-		velocity.x = move_toward(velocity.x, 0, SPEED)
-		velocity.z = move_toward(velocity.z, 0, SPEED)
-
-	if mouse_delta != Vector2.ZERO:
-		rotate_y(-mouse_delta.x * SENSITIVITY)
-		spring_arm.rotate_x(-mouse_delta.y * SENSITIVITY)
-		spring_arm.rotation.x = clamp(spring_arm.rotation.x, deg_to_rad(-89), deg_to_rad(89))
-		mouse_delta = Vector2.ZERO
+		velocity.x = move_toward(velocity.x, 0.0, SPEED)
+		velocity.z = move_toward(velocity.z, 0.0, SPEED)
 
 	update_selection_box()
 	move_and_slide()
